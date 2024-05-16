@@ -1,0 +1,24 @@
+workspace = { members = ["text"] }
+[package]
+name = "editex"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cosmic-text = "0.11.2"
+env_logger = "0.11.3"
+i18n-embed = { version = "0.14.1", features = ["fluent"] }
+log = "0.4.21"
+notify = "6.1.1"
+open = "5.1.2"
+regex = "1.10.4"
+rust-embed = "8.4.0"
+serde = { version = "1.0.201", features = ["serde_derive"] }
+softbuffer = "0.4.2"
+tiny-skia = "0.11.4"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing = "0.1.40"
+unicode-segmentation = "1.11.0"
+winit = "0.29"

@@ -1,0 +1,16 @@
+[package]
+name = "text"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bitflags = "2.5.0"
+fontdb = "0.17.0"
+libm = "0.2.8"
+log = "0.4.21"
+rangemap = "1.5.1"
+rustybuzz = "0.14.0"
+swash = "0.1.15"
+sys-locale = "0.3.1"
