@@ -20,4 +20,6 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tracing = "0.1.40"
 unicode-segmentation = "1.11.0"
 winit = "0.29"
-text = { path = "crates/text" } # Adapted from `cosmic_text`
+
+text = { path = "crates/text" }       # Adapted from `cosmic_text`
+convert = { path = "crates/convert" }

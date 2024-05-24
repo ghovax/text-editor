@@ -1,4 +1,7 @@
-use rustybuzz::UnicodeBuffer;
+use rustybuzz::{
+    ttf_parser::{Face, GlyphId, Rect},
+    UnicodeBuffer,
+};
 use unicode_script::{Script, UnicodeScript};
 use unicode_segmentation::UnicodeSegmentation as _;
 
@@ -25,10 +28,12 @@ pub struct ShapedGlyph {
     pub x_offset: f32,
     /// The vertical offset of the glyph from its origin.
     pub y_offset: f32,
-    /// The ascent of the glyph, typically the distance from the baseline to the top of the glyph.
-    pub ascent: f32,
-    /// The descent of the glyph, typically the distance from the baseline to the bottom of the glyph.
-    pub descent: f32,
+    /// The height of the glyph.
+    pub height: f32,
+    /// The vertical origin of the glyph, it is used to estimate the descent.
+    pub y_origin: f32,
+    /// The vertical maximum reach of the glyph.
+    pub y_reach: f32,
     /// The identifier for the font used to render the glyph.
     pub font_id: fontdb::ID,
     /// The identifier for the glyph within the font.
@@ -46,6 +51,7 @@ impl ShapedGlyph {
         x: f32,
         y: f32,
         width: f32,
+        height: f32,
         level: unicode_bidi::Level,
     ) -> LayoutedGlyph {
         LayoutedGlyph {
@@ -57,11 +63,17 @@ impl ShapedGlyph {
             x,
             y,
             width,
+            height,
             level,
+            y_origin: self.y_origin,
+            y_reach: self.y_reach,
             x_offset: self.x_offset,
             y_offset: self.y_offset,
             color: self.color,
             cache_key_flags: self.cache_key_flags,
+            physical_x_offset: None,
+            physical_y_offset: None,
+            cache_key: None,
         }
     }
 }
@@ -223,6 +235,19 @@ fn shape_word(
         let x_offset = glyph_position.x_offset as f32 / font_scale;
         let y_offset = glyph_position.y_offset as f32 / font_scale;
 
+        let glyph_bounding_box = match font_face.glyph_bounding_box(GlyphId(info.glyph_id as u16)) {
+            Some(bounding_box) => bounding_box,
+            None => Rect {
+                x_min: 0,
+                y_min: 0,
+                x_max: 0,
+                y_max: 0, // TODO
+            },
+        };
+        let glyph_height = glyph_bounding_box.height() as f32 / font_scale;
+        let glyph_y_origin = glyph_bounding_box.y_min as f32 / font_scale;
+        let glyph_y_reach = glyph_bounding_box.y_max as f32 / font_scale;
+
         let glyph_index = start_index + info.cluster as usize;
 
         if info.glyph_id == 0 {
@@ -237,8 +262,9 @@ fn shape_word(
             y_advance,
             x_offset,
             y_offset,
-            ascent,
-            descent,
+            height: glyph_height,
+            y_origin: glyph_y_origin,
+            y_reach: glyph_y_reach,
             font_id: font.id,
             glyph_id: info.glyph_id.try_into().unwrap(),
             color: attributes.color,
@@ -276,6 +302,27 @@ fn shape_word(
     while !missing_glyphs.is_empty() {
         log::warn!("There are missing glyphs: {missing_glyphs:?}");
     }
+}
+
+/// Get the character associated with a glyph ID
+fn get_character_from_glyph_id(face: &Face, glyph_id: GlyphId) -> Option<char> {
+    let mut gid_character = None;
+    // Iterate over all character to glyph mappings
+    for subtable in face.tables().cmap?.subtables {
+        if gid_character.is_some() {
+            break;
+        }
+
+        subtable.codepoints(|codepoint| {
+            if let Some(gid) = subtable.glyph_index(codepoint) {
+                if gid == glyph_id {
+                    gid_character = Some(std::char::from_u32(codepoint).unwrap());
+                }
+            }
+        });
+    }
+
+    gid_character
 }
 
 /// A shaped span (for bidirectional processing).
@@ -518,8 +565,8 @@ impl ShapedLine {
     pub fn layout(&self, font_size: f32) -> LayoutedLine {
         // Initialize variables
         let mut line_width: f32 = 0.0;
-        let mut maximum_ascent: f32 = 0.0;
-        let mut maximum_descent: f32 = 0.0;
+        let mut maximum_y_reach: f32 = 0.0;
+        let mut minimum_y_origin: f32 = 0.0;
 
         // Collect all glyphs from spans
         let mut layouted_glyphs = Vec::new();
@@ -531,13 +578,12 @@ impl ShapedLine {
                 for glyph in &word.shaped_glyphs {
                     let x_advance = font_size * glyph.x_advance;
                     let y_advance = font_size * glyph.y_advance;
+                    let height = glyph.height * font_size;
 
                     // Push glyph to layout
-                    layouted_glyphs.push(
-                        glyph.as_layouted_glyph(
-                            font_size, x_cursor, y_cursor, x_advance, span.level,
-                        ),
-                    );
+                    layouted_glyphs.push(glyph.as_layouted_glyph(
+                        font_size, x_cursor, y_cursor, x_advance, height, span.level,
+                    ));
 
                     if !self.is_right_to_left {
                         x_cursor += x_advance;
@@ -545,8 +591,8 @@ impl ShapedLine {
                     }
                     y_cursor += y_advance;
 
-                    maximum_ascent = maximum_ascent.max(glyph.ascent) * font_size;
-                    maximum_descent = maximum_descent.max(glyph.descent) * font_size;
+                    maximum_y_reach = maximum_y_reach.max(glyph.y_reach * font_size);
+                    minimum_y_origin = minimum_y_origin.min(glyph.y_origin * font_size);
                 }
             }
         }
@@ -554,8 +600,8 @@ impl ShapedLine {
         // Create a single layouted line
         LayoutedLine {
             width: line_width,
-            maximum_ascent,
-            maximum_descent,
+            maximum_y_reach,
+            minimum_y_origin,
             layouted_glyphs,
         }
     }

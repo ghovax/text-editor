@@ -81,6 +81,7 @@ impl SwashCache {
             match image.content {
                 Content::Mask => {
                     let mut index = 0;
+                    
                     for offset_y in 0..image.placement.height as i32 {
                         for offset_x in 0..image.placement.width as i32 {
                             // TODO(ghovax): Blend base alpha?
@@ -97,6 +98,7 @@ impl SwashCache {
                 }
                 Content::Color => {
                     let mut index = 0;
+
                     for offset_y in 0..image.placement.height as i32 {
                         for offset_x in 0..image.placement.width as i32 {
                             // TODO(ghovax): Blend base alpha?
@@ -115,7 +117,7 @@ impl SwashCache {
                     }
                 }
                 Content::SubpixelMask => {
-                    log::warn!("SubpixelMask isn't yet implemented");
+                    log::warn!("`SubpixelMask` isn't yet implemented");
                 }
             }
         }
@@ -128,7 +130,7 @@ fn swash_image_from_cache_key(
     cache_key: CacheKey,
 ) -> Option<Image> {
     let font = match font_system.get_font(cache_key.font_id) {
-        Some(some) => some,
+        Some(font) => font,
         None => {
             log::warn!(
                 "Unable to find the font with the ID {:?}",

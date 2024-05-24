@@ -49,6 +49,15 @@ impl LineBuffer {
         }
     }
 
+    pub fn invalidate_shaping(&mut self) {
+        self.shaped_line = None;
+    }
+
+    pub fn invalidate_layout(&mut self) {
+        self.shaped_line = None;
+        self.layouted_line = None;
+    }
+
     pub fn as_shaped_line(&mut self, font_system: &mut FontSystem) -> &ShapedLine {
         let shaped_line = self.shaped_line.get_or_insert_with(|| {
             ShapedLine::new(font_system, &self.text, &self.attributes_list).unwrap()
@@ -59,16 +68,16 @@ impl LineBuffer {
         shaped_line
     }
 
-    pub fn as_layouted_line(
+    pub fn as_mut_layouted_line(
         &mut self,
         font_system: &mut FontSystem,
         font_size: f32,
-    ) -> &LayoutedLine {
+    ) -> &mut LayoutedLine {
         if self.layouted_line.is_none() {
             let shaped_line = self.as_shaped_line(font_system);
             self.layouted_line = Some(shaped_line.layout(font_size));
         }
 
-        self.layouted_line.as_ref().unwrap()
+        self.layouted_line.as_mut().unwrap()
     }
 }
