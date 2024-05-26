@@ -14,14 +14,14 @@ open = "5.1.2"
 regex = "1.10.4"
 rust-embed = "8.4.0"
 serde = { version = "1.0.201", features = ["serde_derive"] }
-softbuffer = "0.4.2"
+# softbuffer = "0.4.2"
 # tiny-skia = "0.11.4"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-tracing = "0.1.40"
+# tracing = "0.1.40"
 unicode-segmentation = "1.11.0"
-winit = "0.29"
+# winit = "0.29"
+gtk4 = { version = "0.8.2", features = ["v4_8"] }
+skia-safe = "0.73.0"
 
 text = { path = "crates/text" }       # Adapted from `cosmic_text`
 convert = { path = "crates/convert" }
-gtk4 = { version = "0.8.2", features = ["v4_8"] }
-skia-safe = "0.73.0"
