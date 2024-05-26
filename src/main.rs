@@ -133,7 +133,7 @@ fn main() -> glib::ExitCode {
 
             single_click_left_mouse_button_gesture.connect_pressed(move |gesture, _, x, y| {
                 gesture.set_state(gtk4::EventSequenceState::Claimed);
-                let mouse_position = (x, y);
+                let mouse_position = (x * scale_factor as f64, y * scale_factor as f64);
                 log::trace!(
                     "The primary mouse button was pressed at {:?} in the drawing area",
                     mouse_position
@@ -156,7 +156,6 @@ fn main() -> glib::ExitCode {
 
         // Create a Box to act as a Toolbar
         let toolbar = gtk4::Box::new(Orientation::Horizontal, 5);
-        // Add padding to the toolbar Box
         toolbar.set_margin_top(5);
         toolbar.set_margin_bottom(5);
         toolbar.set_margin_start(5);
@@ -166,26 +165,41 @@ fn main() -> glib::ExitCode {
         toolbar.set_height_request(default_toolbar_height);
 
         // Create toolbar buttons
-        let button_new = Button::builder().build();
-        let button_new_icon = gtk4::Image::new();
-        button_new_icon.set_from_file(Some("src/add_24dp_FILL0_wght400_GRAD0_opsz24.png"));
-        button_new.set_child(Some(&button_new_icon));
-
-        toolbar.append(&button_new);
+        for (button_icon_path, button_action) in [
+            (
+                "add_40dp_FILL0_wght400_GRAD0_opsz40",
+                Box::new(|| {
+                    log::trace!("Pressed the add button");
+                }) as Box<dyn Fn()>,
+            ),
+            (
+                "add_link_40dp_FILL0_wght400_GRAD0_opsz40",
+                Box::new(|| {
+                    log::trace!("Pressed the add link button");
+                }) as Box<dyn Fn()>,
+            ),
+        ] {
+            let button = Button::builder().build();
+            let button_icon = gtk4::Image::new();
+            button_icon.set_from_file(Some(format!("src/{button_icon_path}.png").as_str()));
+            button.set_child(Some(&button_icon));
+            button.connect_clicked(move |_button| button_action());
+            toolbar.append(&button);
+        }
 
         vertical_box.append(&toolbar);
 
         let drawing_area = DrawingArea::new();
+        drawing_area.set_content_width(1432); // TODO
+        drawing_area.set_content_height(1412);
         drawing_area.add_controller(single_click_left_mouse_button_gesture);
-
-        drawing_area.set_content_width(1600);
-        drawing_area.set_content_height(900);
 
         let scrolled_window = ScrolledWindow::new();
         scrolled_window.set_hexpand(true);
         scrolled_window.set_vexpand(true);
-
         scrolled_window.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Automatic);
+        scrolled_window.set_child(Some(&drawing_area));
+
         vertical_box.append(&scrolled_window);
 
         #[allow(deprecated)]
