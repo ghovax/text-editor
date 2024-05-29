@@ -1,7 +1,6 @@
-use gtk4::gio::{ApplicationFlags, Cancellable, MemoryInputStream};
-use gtk4::glib::clone;
-use gtk4::subclass::drawing_area;
-use gtk4::{cairo, glib, prelude::*, Button, GestureClick, Orientation, ScrolledWindow};
+use gtk4::gdk::Key;
+use gtk4::gio::{Cancellable, MemoryInputStream};
+use gtk4::{cairo, glib, prelude::*, Button, EventControllerKey, GestureClick, Orientation, ScrolledWindow};
 use gtk4::{DrawingArea, FileChooserAction, FileChooserDialog, ResponseType};
 use serde::{Deserialize, Serialize};
 use skia_safe::image::CachingHint;
@@ -10,7 +9,7 @@ use std::cell::RefCell;
 use std::fs::File;
 use std::io::Read as _;
 use std::rc::Rc;
-use text::attributes::Attributes;
+use text::attributes::{Attributes, Style, Weight};
 use text::{font_system::FontSystem, line_buffer::LineBuffer, swash_cache::SwashCache};
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
@@ -184,10 +183,13 @@ fn run_application_logic(application: &gtk4::Application) {
     button_icon.set_from_pixbuf(Some(&pixel_buffer));
     button.set_child(Some(&button_icon));
 
+    let drawing_area = Rc::new(DrawingArea::new()); // Just `Rc` because it has interior mutability
+
     {
         let window = Rc::clone(&window);
         let document = Rc::clone(&document);
         let font_size = Rc::clone(&font_size);
+        let drawing_area = Rc::clone(&drawing_area);
 
         button.connect_clicked(move |_button| {
             log::trace!("Pressed the button to open a document");
@@ -228,9 +230,9 @@ fn run_application_logic(application: &gtk4::Application) {
             dialog.add_action_widget(&button_box, ResponseType::None);
 
             {
-                let window = Rc::clone(&window);
                 let document = Rc::clone(&document);
                 let font_size = Rc::clone(&font_size);
+                let drawing_area = Rc::clone(&drawing_area);
 
                 dialog.connect_response(move |dialog, response| {
                     if response == ResponseType::Accept {
@@ -249,7 +251,7 @@ fn run_application_logic(application: &gtk4::Application) {
                                     let mut font_size = font_size.borrow_mut();
                                     let _ = std::mem::replace(&mut *font_size, font_size_replacement);
 
-                                    window.queue_draw();
+                                    drawing_area.queue_draw();
                                 }
                             }
                         }
@@ -265,8 +267,6 @@ fn run_application_logic(application: &gtk4::Application) {
     toolbar.append(&button);
 
     vertical_box.append(&toolbar);
-
-    let drawing_area = Rc::new(DrawingArea::new()); // Just `Rc` because it has interior mutability
 
     let single_click_left_mouse_button_gesture = GestureClick::new();
     single_click_left_mouse_button_gesture.set_button(gtk4::gdk::ffi::GDK_BUTTON_PRIMARY as u32);
@@ -288,7 +288,7 @@ fn run_application_logic(application: &gtk4::Application) {
             let mut editing_cursor = editing_cursor.borrow_mut();
 
             let editing_cursor_replacement = EditingCursor::from_mouse_position(&layouted_lines, mouse_position);
-            log::trace!("The editing cursor was replaced with {:?}", editing_cursor_replacement);
+            log::trace!("The editing cursor was replaced with: {:?}", editing_cursor_replacement);
             let _ = std::mem::replace(&mut *editing_cursor, editing_cursor_replacement);
 
             drawing_area.queue_draw();
@@ -320,7 +320,6 @@ fn run_application_logic(application: &gtk4::Application) {
     let surface = Rc::new(RefCell::new(surface));
 
     // The setup of the drawing function
-
     {
         let layouted_lines = Rc::clone(&layouted_lines);
         let font_size = Rc::clone(&font_size);
@@ -393,6 +392,68 @@ fn run_application_logic(application: &gtk4::Application) {
                         }
 
                         layouted_line_buffers.push(line_buffer);
+                    }
+                    DocumentElement::Page { size, contents } => {
+                        // TODO
+                    }
+                }
+            }
+
+            // Draw the hitboxes of the glyphs after they've been laid out and the line boundaries
+            for (line_buffer, document_element) in layouted_line_buffers.iter().zip(document.elements.iter()) {
+                let layouted_line = line_buffer.layouted_line.as_ref().unwrap();
+
+                for glyph in layouted_line.layouted_glyphs.iter() {
+                    let overlay_rectangle = Rect::from_xywh(
+                        glyph.physical_x_offset.unwrap() as f32,
+                        glyph.physical_y_offset.unwrap() as f32 - glyph.y_origin * *font_size,
+                        glyph.width,
+                        glyph.height,
+                    );
+
+                    let mut glyph_outline_path = Path::new();
+                    let (x, y) = (overlay_rectangle.x(), overlay_rectangle.y());
+                    glyph_outline_path.move_to((x, y));
+                    glyph_outline_path.line_to((x + overlay_rectangle.width(), y));
+                    glyph_outline_path.line_to((x + overlay_rectangle.width(), y - overlay_rectangle.height()));
+                    glyph_outline_path.line_to((x, y - overlay_rectangle.height()));
+                    glyph_outline_path.close();
+
+                    let mut painting_options = Paint::default();
+                    painting_options.set_color(skia_safe::Color::from_argb(128, 0, 0, 255));
+                    painting_options.set_stroke_width(1.0);
+                    painting_options.set_stroke(true);
+
+                    canvas.draw_path(&glyph_outline_path, &painting_options);
+                }
+
+                match document_element {
+                    DocumentElement::Line { anchor_point, .. } => {
+                        let mut painting_options = Paint::default();
+                        painting_options.set_color(skia_safe::Color::from_argb(128, 255, 0, 0));
+                        painting_options.set_stroke_width(1.0);
+                        painting_options.set_stroke(true);
+
+                        let x_origin = layouted_line
+                            .layouted_glyphs
+                            .first()
+                            .unwrap()
+                            .physical_x_offset
+                            .unwrap() as f32;
+                        let last_glyph = layouted_line.layouted_glyphs.last().unwrap();
+                        let x_reach = last_glyph.physical_x_offset.unwrap() as f32 + last_glyph.width;
+
+                        let mut line_top_path = Path::new();
+                        line_top_path.move_to((x_origin, anchor_point.1 - layouted_line.maximum_y_reach));
+                        line_top_path.line_to((x_reach, anchor_point.1 - layouted_line.maximum_y_reach));
+
+                        canvas.draw_path(&line_top_path, &painting_options);
+
+                        let mut line_bottom_path = Path::new();
+                        line_bottom_path.move_to((x_origin, anchor_point.1 - layouted_line.minimum_y_origin));
+                        line_bottom_path.line_to((x_reach, anchor_point.1 - layouted_line.minimum_y_origin));
+
+                        canvas.draw_path(&line_bottom_path, &painting_options);
                     }
                     DocumentElement::Page { size, contents } => {
                         // TODO
@@ -487,75 +548,13 @@ fn run_application_logic(application: &gtk4::Application) {
                             draw_filled_rectangle(
                                 x + anchor_point.0 as i32,
                                 (anchor_point.1 - layouted_line.maximum_y_reach) as i32,
-                                2,
+                                1,
                                 (layouted_line.maximum_y_reach - layouted_line.minimum_y_origin).abs() as u32,
                                 cursor_color,
                             );
 
                             break;
                         }
-                    }
-                    DocumentElement::Page { size, contents } => {
-                        // TODO
-                    }
-                }
-            }
-
-            // Draw the hitboxes of the glyphs after they've been laid out and the line boundaries
-            for (line_buffer, document_element) in layouted_line_buffers.iter().zip(document.elements.iter()) {
-                let layouted_line = line_buffer.layouted_line.as_ref().unwrap();
-
-                for glyph in layouted_line.layouted_glyphs.iter() {
-                    let overlay_rectangle = Rect::from_xywh(
-                        glyph.physical_x_offset.unwrap() as f32,
-                        glyph.physical_y_offset.unwrap() as f32 - glyph.y_origin * *font_size,
-                        glyph.width,
-                        glyph.height,
-                    );
-
-                    let mut glyph_outline_path = Path::new();
-                    let (x, y) = (overlay_rectangle.x(), overlay_rectangle.y());
-                    glyph_outline_path.move_to((x, y));
-                    glyph_outline_path.line_to((x + overlay_rectangle.width(), y));
-                    glyph_outline_path.line_to((x + overlay_rectangle.width(), y - overlay_rectangle.height()));
-                    glyph_outline_path.line_to((x, y - overlay_rectangle.height()));
-                    glyph_outline_path.close();
-
-                    let mut painting_options = Paint::default();
-                    painting_options.set_color(skia_safe::Color::from_argb(128, 0, 0, 255));
-                    painting_options.set_stroke_width(1.0);
-                    painting_options.set_stroke(true);
-
-                    canvas.draw_path(&glyph_outline_path, &painting_options);
-                }
-
-                match document_element {
-                    DocumentElement::Line { anchor_point, .. } => {
-                        let mut painting_options = Paint::default();
-                        painting_options.set_color(skia_safe::Color::from_argb(128, 255, 0, 0));
-                        painting_options.set_stroke_width(1.0);
-                        painting_options.set_stroke(true);
-
-                        let x_origin = layouted_line
-                            .layouted_glyphs
-                            .first()
-                            .unwrap()
-                            .physical_x_offset
-                            .unwrap() as f32;
-                        let last_glyph = layouted_line.layouted_glyphs.last().unwrap();
-                        let x_reach = last_glyph.physical_x_offset.unwrap() as f32 + last_glyph.width;
-
-                        let mut line_top_path = Path::new();
-                        line_top_path.move_to((x_origin, anchor_point.1 - layouted_line.maximum_y_reach));
-                        line_top_path.line_to((x_reach, anchor_point.1 - layouted_line.maximum_y_reach));
-
-                        canvas.draw_path(&line_top_path, &painting_options);
-
-                        let mut line_bottom_path = Path::new();
-                        line_bottom_path.move_to((x_origin, anchor_point.1 - layouted_line.minimum_y_origin));
-                        line_bottom_path.line_to((x_reach, anchor_point.1 - layouted_line.minimum_y_origin));
-
-                        canvas.draw_path(&line_bottom_path, &painting_options);
                     }
                     DocumentElement::Page { size, contents } => {
                         // TODO
@@ -592,6 +591,136 @@ fn run_application_logic(application: &gtk4::Application) {
             cairo_context.paint().unwrap();
         });
     }
+
+    // Create a `EventControllerKey` to handle keyboard events
+    let key_controller = EventControllerKey::new();
+
+    {
+        let editing_cursor = Rc::clone(&editing_cursor);
+        let drawing_area = Rc::clone(&drawing_area);
+        let layouted_lines = Rc::clone(&layouted_lines);
+
+        key_controller.connect_key_pressed(move |_controller, key, keycode, state| {
+            log::trace!(
+                "The user pressed the key: {} with keycode {} that is in the state {:?}",
+                key,
+                keycode,
+                state
+            );
+
+            let mut editing_cursor = editing_cursor.borrow_mut();
+            let mut layouted_lines = layouted_lines.borrow_mut();
+
+            // Handle key events
+            match key {
+                Key::Left => {
+                    // Move the cursor left
+                    if editing_cursor.glyph_index_in_line > 0 {
+                        editing_cursor.glyph_index_in_line -= 1;
+                    }
+                }
+                Key::Right => {
+                    // Move the cursor right
+                    let line_buffer = layouted_lines.get(editing_cursor.line_index).unwrap();
+                    if editing_cursor.glyph_index_in_line < line_buffer.text.len() {
+                        editing_cursor.glyph_index_in_line += 1;
+                    }
+                }
+                Key::Up => {
+                    // Move the cursor up
+                    if editing_cursor.line_index > 0 {
+                        editing_cursor.line_index -= 1;
+                    }
+                }
+                Key::Down => {
+                    // Move the cursor down
+                    if editing_cursor.line_index < layouted_lines.len() - 1 {
+                        editing_cursor.line_index += 1;
+                    }
+                }
+                _ => {}
+            }
+
+            if let Some(character) = key.to_unicode() {
+                if character.is_control() && !['\t', '\n', '\r', '\u{92}'].contains(&character) {
+                    // Filter out special chars (except for tab)
+                    log::trace!("Refusing to insert control character {:?}", character);
+                } else if ['\n', '\r'].contains(&character) {
+                    log::warn!("Received enter input, still have to implement the functionality");
+                } else {
+                    let cursor_line_buffer = layouted_lines.get_mut(editing_cursor.line_index).unwrap();
+                    let mut cursor_line_spans = cursor_line_buffer.spans.clone();
+
+                    // Find for which elements of the span the cursor index belongs to
+                    // For example, in the span `[("B", attributes), ("old ", attributes.bold())]`,
+                    // the cursor index 1 would belong to the span `[("old ", attributes.italic())]`, as would the indices 2, 3 and 4
+                    // and the cursor index 0 would belong to the span `[("B", attributes)]`.
+                    let mut cursor_span_index = None;
+                    let mut index_in_span = None;
+                    {
+                        let mut total_characters_counter = 0;
+                        'outer: for (span_index, span) in cursor_line_spans.iter().enumerate() {
+                            for (character_index, _character) in span.0.chars().enumerate() {
+                                if total_characters_counter == editing_cursor.glyph_index_in_line {
+                                    cursor_span_index = Some(span_index);
+                                    index_in_span = Some(character_index);
+                                    break 'outer;
+                                }
+                                total_characters_counter += 1;
+                            }
+                        }
+                    }
+
+                    let cursor_span_index = cursor_span_index.unwrap_or(cursor_line_spans.len() - 1); // TODO
+                    let index_in_span =
+                        index_in_span.unwrap_or(cursor_line_spans.get(cursor_span_index).unwrap().0.len());
+
+                    cursor_line_spans
+                        .get_mut(cursor_span_index)
+                        .unwrap()
+                        .0
+                        .insert(index_in_span, character);
+
+                    let cursor_line_buffer_replacement = LineBuffer::from_rich_text(
+                        &cursor_line_spans
+                            .iter()
+                            .map(|span| {
+                                (
+                                    span.0.clone(),
+                                    match span.1 {
+                                        Attributes {
+                                            weight: Weight::MEDIUM,
+                                            style: Style::Italic,
+                                            ..
+                                        } => vec!["italic".to_string(), "bold".to_string()],
+                                        Attributes {
+                                            style: Style::Italic, ..
+                                        } => vec!["italic".to_string()],
+                                        Attributes {
+                                            weight: Weight::MEDIUM, ..
+                                        } => vec!["bold".to_string()],
+                                        _ => vec![],
+                                    },
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                        Attributes::new(),
+                    );
+                    log::trace!(
+                        "Newly replaced spans after editing the text: {:?}",
+                        cursor_line_buffer_replacement.spans
+                    );
+                    let _ = std::mem::replace(cursor_line_buffer, cursor_line_buffer_replacement);
+                    editing_cursor.glyph_index_in_line += 1;
+                }
+            }
+
+            drawing_area.queue_draw();
+            glib::Propagation::Proceed
+        });
+    }
+
+    window.add_controller(key_controller);
 
     // Add the DrawingArea to the ScrolledWindow
     scrolled_window.set_child(Some(drawing_area.as_ref()));

@@ -10,10 +10,12 @@ pub struct LineBuffer {
     pub attributes_list: AttributesList,
     pub shaped_line: Option<ShapedLine>,
     pub layouted_line: Option<LayoutedLine>,
+    pub spans: Vec<(String, Attributes)>,
 }
 
 impl LineBuffer {
     pub fn from_rich_text(content_spans: &[(String, Vec<String>)], default_attributes: Attributes) -> Self {
+        let mut spans = Vec::new();
         let (reconstructed_string, mut spans_data): (String, Vec<_>) = {
             let mut end_index = 0;
 
@@ -43,12 +45,15 @@ impl LineBuffer {
                     }
                 }
             }
+            spans.push((span_text.to_string(), current_span_attributes));
+
             if current_span_attributes != attributes_list.default_attributes {
                 attributes_list.add_span(span_range.clone(), current_span_attributes)
             }
         }
 
         Self {
+            spans,
             attributes_list,
             text: reconstructed_string,
             shaped_line: None,

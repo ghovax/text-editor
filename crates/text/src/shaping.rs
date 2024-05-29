@@ -300,7 +300,7 @@ fn shape_word(
     }
 }
 
-/// Get the character associated with a glyph ID
+/// Get the character associated with a glyph ID.
 fn get_character_from_glyph_id(face: &Face, glyph_id: GlyphId) -> Option<char> {
     let mut gid_character = None;
     // Iterate over all character to glyph mappings
@@ -431,15 +431,15 @@ impl ShapedLine {
             let line_range = paragraph_info.range.clone();
             let levels = Self::adjust_levels(&unicode_bidi::Paragraph::new(&bidirectional_info, paragraph_info));
 
-            // Find consecutive level word_texts. We use this to create `ShapedSpan`s.
-            // Each span is a set of characters with equal levels.
+            // Find consecutive level word_texts. We use this to create `ShapedSpan`s
+            // Each span is a set of characters with equal levels
             let mut start_index = line_range.start;
             let mut word_text_level = levels.get(start_index)?;
             shaped_spans.reserve(line_range.end - start_index + 1);
 
             for (index, level) in levels.iter().enumerate().take(line_range.end).skip(start_index + 1) {
                 if level != word_text_level {
-                    // End of the previous word_text, start of a new one.
+                    // End of the previous word_text, start of a new one
                     shaped_spans.push(ShapedSpan::new(
                         font_system,
                         text,
@@ -470,7 +470,7 @@ impl ShapedLine {
         })
     }
 
-    /// A modified version of first part of `unicode_bidi::bidi_info::visual_word_text`.
+    /// A modified version of first part of `unicode_bidi::bidi_info::visual_word_text`
     fn adjust_levels(paragraph: &unicode_bidi::Paragraph) -> Vec<unicode_bidi::Level> {
         use unicode_bidi::BidiClass::*;
 
@@ -482,7 +482,7 @@ impl ShapedLine {
         let line_classes = &original_classes[..];
         let line_levels = &mut levels[..];
 
-        // Reset some whitespace chars to paragraph level.
+        // Reset some whitespace chars to paragraph level
         // <http://www.unicode.org/reports/tr9/#L1>
         let mut reset_from: Option<usize> = Some(0);
         let mut reset_to: Option<usize> = None;
@@ -530,7 +530,7 @@ impl ShapedLine {
         levels
     }
 
-    // TODO(ghovax): Does not yet handle right to left layouts.
+    // TODO(ghovax): Does not yet handle right to left layouts
     pub fn layout(&self, font_size: f32) -> LayoutedLine {
         // Initialize variables
         let mut line_width: f32 = 0.0;

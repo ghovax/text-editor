@@ -1,6 +1,11 @@
+use unicode_linebreak::BreakOpportunity;
+
 use crate::{
+    attributes::AttributesList,
     color::Color,
+    font_system::FontSystem,
     glyph_cache::{CacheKey, CacheKeyFlags},
+    shaping::{ShapedLine, ShapedSpan, ShapedWord},
 };
 
 /// A laid-out glyph together with all its configurations.
