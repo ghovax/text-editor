@@ -10,12 +10,10 @@ pub struct LineBuffer {
     pub attributes_list: AttributesList,
     pub shaped_line: Option<ShapedLine>,
     pub layouted_line: Option<LayoutedLine>,
-    pub spans: Vec<(String, Attributes)>,
 }
 
 impl LineBuffer {
-    pub fn from_rich_text(content_spans: &[(String, Vec<String>)], default_attributes: Attributes) -> Self {
-        let mut spans = Vec::new();
+    pub fn from_rich_text(content_spans: &[(String, Attributes)], default_attributes: Attributes) -> Self {
         let (reconstructed_string, mut spans_data): (String, Vec<_>) = {
             let mut end_index = 0;
 
@@ -35,25 +33,12 @@ impl LineBuffer {
         for (span_range, span_attributes) in spans_data.iter_mut() {
             let span_text = reconstructed_string.get(span_range.clone()).unwrap();
 
-            let mut current_span_attributes = default_attributes.clone();
-            for attribute in span_attributes.iter() {
-                current_span_attributes = match attribute.as_str() {
-                    "bold" => current_span_attributes.bold(),
-                    "italic" => current_span_attributes.italic(),
-                    _ => {
-                        panic!("unknown attribute encountered during the parsing: {:?}", attribute);
-                    }
-                }
-            }
-            spans.push((span_text.to_string(), current_span_attributes));
-
-            if current_span_attributes != attributes_list.default_attributes {
-                attributes_list.add_span(span_range.clone(), current_span_attributes)
+            if *span_attributes != attributes_list.default_attributes {
+                attributes_list.add_span(span_range.clone(), *span_attributes)
             }
         }
 
         Self {
-            spans,
             attributes_list,
             text: reconstructed_string,
             shaped_line: None,

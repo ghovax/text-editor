@@ -13,7 +13,9 @@
             "spans": [
                 [
                     "Hello ",
-                    []
+                    [
+                        "roman"
+                    ]
                 ],
                 [
                     "everyone",
@@ -23,7 +25,9 @@
                 ],
                 [
                     " and welcome to my ",
-                    []
+                    [
+                        "roman"
+                    ]
                 ],
                 [
                     "application!",

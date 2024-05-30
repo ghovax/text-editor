@@ -2,6 +2,7 @@ use std::ops::Range;
 
 pub use fontdb::{Family, Stretch, Style, Weight};
 use rangemap::RangeMap;
+use serde::ser::SerializeSeq as _;
 
 use crate::{color::Color, glyph_cache::CacheKeyFlags};
 
@@ -130,4 +131,80 @@ impl AttributesList {
 
         Some(updated_attributes_list)
     }
+}
+
+impl serde::Serialize for Attributes {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Basically for each or the selected properties of the font, we serialize the value
+        // as a string and append it onto a vector. Then we serialize the vector.
+        // So for example if I have annot italic style and a medium weight, the serialized
+        // vector would be ["italic", "bold"], and then we would serialize that vector.
+        let mut attributes_strings: Vec<String> = Vec::new();
+        if self.style == Style::Italic {
+            attributes_strings.push("italic".to_string());
+        }
+
+        if self.weight == Weight::MEDIUM {
+            attributes_strings.push("bold".to_string());
+        }
+
+        if attributes_strings.is_empty() {
+            attributes_strings.push("roman".to_string());
+        }
+
+        // Serialize the vector as a vector containing the strings
+        let mut sequence = serializer.serialize_seq(Some(attributes_strings.len()))?;
+        for attribute in &attributes_strings {
+            sequence.serialize_element(attribute)?;
+        }
+
+        sequence.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Attributes {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Deserialize the sequence of strings
+        let attributes_strings: Vec<String> = serde::Deserialize::deserialize(deserializer)?;
+
+        // Process the deserialized strings
+        let mut attributes = Attributes::new();
+        for attribute in attributes_strings {
+            match attribute.as_str() {
+                "italic" => attributes.style = Style::Italic,
+                "bold" => attributes.weight = Weight::MEDIUM,
+                "roman" => attributes.style = Style::Normal,
+                _ => {
+                    return Err(serde::de::Error::custom(format!(
+                        "Unknown attribute string: {}",
+                        attribute
+                    )))
+                }
+            }
+        }
+
+        Ok(attributes)
+    }
+}
+
+#[test]
+fn tester_attributes_serialize() {
+    let mut attributes = Attributes::new().italic().bold();
+
+    let serialized = serde_json::to_string(&attributes).unwrap();
+    assert_eq!(serialized, r#"["italic","bold"]"#);
+}
+
+#[test]
+fn tester_attributes_deserialize() {
+    let attributes = serde_json::from_str::<Attributes>(r#"["italic","bold"]"#).unwrap();
+
+    assert_eq!(attributes.style, Style::Italic);
+    assert_eq!(attributes.weight, Weight::MEDIUM);
 }

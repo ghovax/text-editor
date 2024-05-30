@@ -5,6 +5,7 @@ use gtk4::{DrawingArea, FileChooserAction, FileChooserDialog, ResponseType};
 use serde::{Deserialize, Serialize};
 use skia_safe::image::CachingHint;
 use skia_safe::{Paint, Path, Rect, Surface};
+use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::Read as _;
@@ -28,7 +29,7 @@ pub enum DocumentElement {
     #[serde(rename_all = "camelCase", untagged)]
     Line {
         anchor_point: (f32, f32),
-        spans: Vec<(String, Vec<String>)>,
+        spans: Vec<(String, Attributes)>,
     },
 }
 
@@ -161,7 +162,7 @@ fn run_application_logic(application: &gtk4::Application) {
     let document = Rc::new(RefCell::new(None::<Document>));
     let font_size = Rc::new(RefCell::new(0.0));
     let editing_cursor = Rc::new(RefCell::new(EditingCursor::default()));
-    let layouted_lines: Rc<RefCell<Vec<LineBuffer>>> = Rc::new(RefCell::new(Vec::new()));
+    let layouted_lines = Rc::new(RefCell::new(Vec::new()));
 
     // Initialize the GUI components from the creation of a vertical stack
     let vertical_box = gtk4::Box::new(Orientation::Vertical, 0);
@@ -194,7 +195,7 @@ fn run_application_logic(application: &gtk4::Application) {
         button.connect_clicked(move |_button| {
             log::trace!("Pressed the button to open a document");
             let dialog = Rc::new(FileChooserDialog::new(
-                Some("Open File"),
+                Some("Open document from JSON file"),
                 Some(window.as_ref()),
                 FileChooserAction::Open,
                 &[],
@@ -284,7 +285,7 @@ fn run_application_logic(application: &gtk4::Application) {
                 mouse_position
             );
 
-            let layouted_lines = layouted_lines.borrow();
+            let layouted_lines = layouted_lines.borrow_mut();
             let mut editing_cursor = editing_cursor.borrow_mut();
 
             let editing_cursor_replacement = EditingCursor::from_mouse_position(&layouted_lines, mouse_position);
@@ -327,7 +328,7 @@ fn run_application_logic(application: &gtk4::Application) {
         let document = Rc::clone(&document);
 
         drawing_area.set_draw_func(move |_drawing_area, cairo_context, width, height| {
-            let document = document.borrow();
+            let document = document.borrow_mut();
             if document.is_none() {
                 log::trace!("The drawing area is being redrawn but there is no document");
                 return;
@@ -358,12 +359,13 @@ fn run_application_logic(application: &gtk4::Application) {
                 );
             };
             let mut layouted_line_buffers = Vec::new();
-            let font_size = font_size.borrow();
+            let font_size = font_size.borrow_mut();
 
             for document_element in document.elements.iter() {
                 match document_element {
                     DocumentElement::Line { anchor_point, spans } => {
                         let default_attributes = Attributes::new();
+
                         let mut line_buffer = LineBuffer::from_rich_text(spans, default_attributes);
                         let layouted_line = line_buffer.as_mut_layouted_line(&mut font_system, *font_size);
 
@@ -461,7 +463,7 @@ fn run_application_logic(application: &gtk4::Application) {
                 }
             }
 
-            let editing_cursor = editing_cursor.borrow();
+            let editing_cursor = editing_cursor.borrow_mut();
 
             for ((line_index, line_buffer), document_element) in
                 layouted_line_buffers.iter().enumerate().zip(document.elements.iter())
@@ -599,6 +601,7 @@ fn run_application_logic(application: &gtk4::Application) {
         let editing_cursor = Rc::clone(&editing_cursor);
         let drawing_area = Rc::clone(&drawing_area);
         let layouted_lines = Rc::clone(&layouted_lines);
+        let document = Rc::clone(&document);
 
         key_controller.connect_key_pressed(move |_controller, key, keycode, state| {
             log::trace!(
@@ -610,6 +613,7 @@ fn run_application_logic(application: &gtk4::Application) {
 
             let mut editing_cursor = editing_cursor.borrow_mut();
             let mut layouted_lines = layouted_lines.borrow_mut();
+            let mut document = document.borrow_mut();
 
             // Handle key events
             match key {
@@ -648,70 +652,45 @@ fn run_application_logic(application: &gtk4::Application) {
                 } else if ['\n', '\r'].contains(&character) {
                     log::warn!("Received enter input, still have to implement the functionality");
                 } else {
-                    let cursor_line_buffer = layouted_lines.get_mut(editing_cursor.line_index).unwrap();
-                    let mut cursor_line_spans = cursor_line_buffer.spans.clone();
-
-                    // Find for which elements of the span the cursor index belongs to
-                    // For example, in the span `[("B", attributes), ("old ", attributes.bold())]`,
-                    // the cursor index 1 would belong to the span `[("old ", attributes.italic())]`, as would the indices 2, 3 and 4
-                    // and the cursor index 0 would belong to the span `[("B", attributes)]`.
-                    let mut cursor_span_index = None;
-                    let mut index_in_span = None;
-                    {
-                        let mut total_characters_counter = 0;
-                        'outer: for (span_index, span) in cursor_line_spans.iter().enumerate() {
-                            for (character_index, _character) in span.0.chars().enumerate() {
-                                if total_characters_counter == editing_cursor.glyph_index_in_line {
-                                    cursor_span_index = Some(span_index);
-                                    index_in_span = Some(character_index);
-                                    break 'outer;
+                    let mut line_index_counter = 0;
+                    for document_element in document.as_mut().unwrap().elements.iter_mut() {
+                        if let DocumentElement::Line { spans, .. } = document_element {
+                            if line_index_counter == editing_cursor.line_index {
+                                // Find for which elements of the span the cursor index belongs to
+                                // For example, in the span `[("B", attributes), ("old ", attributes.bold())]`,
+                                // the cursor index 1 would belong to the span `[("old ", attributes.italic())]`, as would the indices 2, 3 and 4
+                                // and the cursor index 0 would belong to the span `[("B", attributes)]`.
+                                let mut cursor_span_index = None;
+                                let mut index_in_span = None;
+                                {
+                                    let mut total_characters_counter = 0;
+                                    'outer: for (span_index, span) in spans.iter().enumerate() {
+                                        for (character_index, _character) in span.0.chars().enumerate() {
+                                            if total_characters_counter == editing_cursor.glyph_index_in_line {
+                                                cursor_span_index = Some(span_index);
+                                                index_in_span = Some(character_index);
+                                                break 'outer;
+                                            }
+                                            total_characters_counter += 1;
+                                        }
+                                    }
                                 }
-                                total_characters_counter += 1;
+
+                                let cursor_span_index = cursor_span_index.unwrap_or(spans.len() - 1); // TODO
+                                let index_in_span =
+                                    index_in_span.unwrap_or(spans.get(cursor_span_index).unwrap().0.len());
+
+                                spans
+                                    .get_mut(cursor_span_index)
+                                    .unwrap()
+                                    .0
+                                    .insert(index_in_span, character);
+
+                                editing_cursor.glyph_index_in_line += 1;
                             }
+                            line_index_counter += 1;
                         }
                     }
-
-                    let cursor_span_index = cursor_span_index.unwrap_or(cursor_line_spans.len() - 1); // TODO
-                    let index_in_span =
-                        index_in_span.unwrap_or(cursor_line_spans.get(cursor_span_index).unwrap().0.len());
-
-                    cursor_line_spans
-                        .get_mut(cursor_span_index)
-                        .unwrap()
-                        .0
-                        .insert(index_in_span, character);
-
-                    let cursor_line_buffer_replacement = LineBuffer::from_rich_text(
-                        &cursor_line_spans
-                            .iter()
-                            .map(|span| {
-                                (
-                                    span.0.clone(),
-                                    match span.1 {
-                                        Attributes {
-                                            weight: Weight::MEDIUM,
-                                            style: Style::Italic,
-                                            ..
-                                        } => vec!["italic".to_string(), "bold".to_string()],
-                                        Attributes {
-                                            style: Style::Italic, ..
-                                        } => vec!["italic".to_string()],
-                                        Attributes {
-                                            weight: Weight::MEDIUM, ..
-                                        } => vec!["bold".to_string()],
-                                        _ => vec![],
-                                    },
-                                )
-                            })
-                            .collect::<Vec<_>>(),
-                        Attributes::new(),
-                    );
-                    log::trace!(
-                        "Newly replaced spans after editing the text: {:?}",
-                        cursor_line_buffer_replacement.spans
-                    );
-                    let _ = std::mem::replace(cursor_line_buffer, cursor_line_buffer_replacement);
-                    editing_cursor.glyph_index_in_line += 1;
                 }
             }
 
