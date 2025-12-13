@@ -177,6 +177,7 @@ fn run_application_logic(application: &gtk4::Application) {
 
     // Create toolbar buttons
     let button = Button::builder().build();
+    button.set_can_focus(false); // Prevent keyboard activation (Space/Enter)
     let button_icon = gtk4::Image::new();
     let image_bytes = include_bytes!("add_link_40dp_FILL0_wght400_GRAD0_opsz40.png").to_vec();
     let image_bytes_stream = MemoryInputStream::from_bytes(&glib::Bytes::from_owned(image_bytes));
@@ -206,6 +207,7 @@ fn run_application_logic(application: &gtk4::Application) {
 
             // Create custom Cancel button
             let cancel_button = Button::with_label("Cancel");
+            cancel_button.set_can_focus(false); // Prevent keyboard activation
             {
                 let dialog = Rc::clone(&dialog);
 
@@ -216,6 +218,7 @@ fn run_application_logic(application: &gtk4::Application) {
 
             // Create custom Open button
             let open_button = Button::with_label("Open file");
+            open_button.set_can_focus(false); // Prevent keyboard activation
             {
                 let dialog = Rc::clone(&dialog);
                 open_button.connect_clicked(move |_| {
@@ -253,6 +256,8 @@ fn run_application_logic(application: &gtk4::Application) {
                                     let _ = std::mem::replace(&mut *font_size, font_size_replacement);
 
                                     drawing_area.queue_draw();
+                                    // Give focus to the drawing area so it can receive keyboard input
+                                    drawing_area.grab_focus();
                                 }
                             }
                         }
@@ -642,6 +647,78 @@ fn run_application_logic(application: &gtk4::Application) {
                         editing_cursor.line_index += 1;
                     }
                 }
+                Key::BackSpace => {
+                    // Delete character before cursor
+                    if editing_cursor.glyph_index_in_line > 0 {
+                        let mut line_index_counter = 0;
+                        for document_element in document.as_mut().unwrap().elements.iter_mut() {
+                            if let DocumentElement::Line { spans, .. } = document_element {
+                                if line_index_counter == editing_cursor.line_index {
+                                    let mut total_characters_counter = 0;
+                                    let mut cursor_span_index = None;
+                                    let mut index_in_span = None;
+
+                                    'outer: for (span_index, span) in spans.iter().enumerate() {
+                                        for (character_index, _character) in span.0.chars().enumerate() {
+                                            if total_characters_counter == editing_cursor.glyph_index_in_line - 1 {
+                                                cursor_span_index = Some(span_index);
+                                                index_in_span = Some(character_index);
+                                                break 'outer;
+                                            }
+                                            total_characters_counter += 1;
+                                        }
+                                        // Check if cursor is at end of span
+                                        if total_characters_counter == editing_cursor.glyph_index_in_line - 1 {
+                                            cursor_span_index = Some(span_index);
+                                            index_in_span = Some(span.0.len() - 1);
+                                            break 'outer;
+                                        }
+                                    }
+
+                                    if let (Some(cursor_span_index), Some(index_in_span)) = (cursor_span_index, index_in_span) {
+                                        let span_text = &mut spans.get_mut(cursor_span_index).unwrap().0;
+                                        span_text.remove(index_in_span);
+                                        editing_cursor.glyph_index_in_line -= 1;
+                                    }
+                                }
+                                line_index_counter += 1;
+                            }
+                        }
+                    }
+                }
+                Key::Delete => {
+                    // Delete character after cursor
+                    let line_buffer = layouted_lines.get(editing_cursor.line_index).unwrap();
+                    if editing_cursor.glyph_index_in_line < line_buffer.text.len() {
+                        let mut line_index_counter = 0;
+                        for document_element in document.as_mut().unwrap().elements.iter_mut() {
+                            if let DocumentElement::Line { spans, .. } = document_element {
+                                if line_index_counter == editing_cursor.line_index {
+                                    let mut total_characters_counter = 0;
+                                    let mut cursor_span_index = None;
+                                    let mut index_in_span = None;
+
+                                    'outer: for (span_index, span) in spans.iter().enumerate() {
+                                        for (character_index, _character) in span.0.chars().enumerate() {
+                                            if total_characters_counter == editing_cursor.glyph_index_in_line {
+                                                cursor_span_index = Some(span_index);
+                                                index_in_span = Some(character_index);
+                                                break 'outer;
+                                            }
+                                            total_characters_counter += 1;
+                                        }
+                                    }
+
+                                    if let (Some(cursor_span_index), Some(index_in_span)) = (cursor_span_index, index_in_span) {
+                                        let span_text = &mut spans.get_mut(cursor_span_index).unwrap().0;
+                                        span_text.remove(index_in_span);
+                                    }
+                                }
+                                line_index_counter += 1;
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
 
@@ -650,7 +727,86 @@ fn run_application_logic(application: &gtk4::Application) {
                     // Filter out special chars (except for tab)
                     log::trace!("Refusing to insert control character {:?}", character);
                 } else if ['\n', '\r'].contains(&character) {
-                    log::warn!("Received enter input, still have to implement the functionality");
+                    // Handle Enter key - create a new line
+                    let mut line_index_counter = 0;
+                    let mut new_line_to_insert: Option<(usize, DocumentElement)> = None;
+                    let font_size = document.as_ref().unwrap().font_size;
+
+                    for document_element in document.as_mut().unwrap().elements.iter_mut() {
+                        if let DocumentElement::Line { anchor_point, spans } = document_element {
+                            if line_index_counter == editing_cursor.line_index {
+                                // Find the cursor position within spans
+                                let mut total_characters_counter = 0;
+                                let mut cursor_span_index = None;
+                                let mut index_in_span = None;
+
+                                'outer: for (span_index, span) in spans.iter().enumerate() {
+                                    for (character_index, _character) in span.0.chars().enumerate() {
+                                        if total_characters_counter == editing_cursor.glyph_index_in_line {
+                                            cursor_span_index = Some(span_index);
+                                            index_in_span = Some(character_index);
+                                            break 'outer;
+                                        }
+                                        total_characters_counter += 1;
+                                    }
+                                    // Check if cursor is at end of span
+                                    if total_characters_counter == editing_cursor.glyph_index_in_line {
+                                        cursor_span_index = Some(span_index);
+                                        index_in_span = Some(span.0.len());
+                                        break 'outer;
+                                    }
+                                }
+
+                                let cursor_span_index = cursor_span_index.unwrap_or(spans.len() - 1);
+                                let index_in_span = index_in_span.unwrap_or(spans.get(cursor_span_index).unwrap().0.len());
+
+                                // Split the spans at cursor position
+                                let mut new_line_spans = Vec::new();
+
+                                // Add the part after cursor in the current span to new line
+                                if index_in_span < spans[cursor_span_index].0.len() {
+                                    let split_text = spans[cursor_span_index].0.split_off(index_in_span);
+                                    if !split_text.is_empty() {
+                                        new_line_spans.push((split_text, spans[cursor_span_index].1.clone()));
+                                    }
+                                }
+
+                                // Move remaining spans to new line
+                                while cursor_span_index + 1 < spans.len() {
+                                    new_line_spans.push(spans.remove(cursor_span_index + 1));
+                                }
+
+                                // If new line has no spans, add an empty one with default attributes
+                                if new_line_spans.is_empty() {
+                                    new_line_spans.push((String::new(), Attributes::new()));
+                                }
+
+                                // Calculate new anchor point (offset by font size + some spacing)
+                                let new_anchor_point = (anchor_point.0, anchor_point.1 + font_size * 1.5);
+
+                                // Create new line element
+                                new_line_to_insert = Some((
+                                    line_index_counter + 1,
+                                    DocumentElement::Line {
+                                        anchor_point: new_anchor_point,
+                                        spans: new_line_spans,
+                                    }
+                                ));
+
+                                // Update cursor
+                                editing_cursor.line_index += 1;
+                                editing_cursor.glyph_index_in_line = 0;
+
+                                break;
+                            }
+                            line_index_counter += 1;
+                        }
+                    }
+
+                    // Insert the new line
+                    if let Some((insert_index, new_line)) = new_line_to_insert {
+                        document.as_mut().unwrap().elements.insert(insert_index, new_line);
+                    }
                 } else {
                     let mut line_index_counter = 0;
                     for document_element in document.as_mut().unwrap().elements.iter_mut() {
@@ -695,11 +851,17 @@ fn run_application_logic(application: &gtk4::Application) {
             }
 
             drawing_area.queue_draw();
-            glib::Propagation::Proceed
+            glib::Propagation::Stop
         });
     }
 
-    window.add_controller(key_controller);
+    // Make the drawing area focusable so it can receive keyboard events
+    drawing_area.set_focusable(true);
+    drawing_area.set_can_focus(true);
+
+    // Attach the key controller to the drawing area instead of the window
+    // This ensures keyboard input goes to the text editing area, not UI buttons
+    drawing_area.add_controller(key_controller);
 
     // Add the DrawingArea to the ScrolledWindow
     scrolled_window.set_child(Some(drawing_area.as_ref()));
