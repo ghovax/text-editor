@@ -193,7 +193,18 @@ fn shape_word(
             }
         }
     }
-    let font = selected_font.unwrap();
+
+    // If no exact family match, fall back to the first available font
+    if selected_font.is_none() {
+        for font_match_key in font_match_keys.iter() {
+            if let Some(font) = font_system.get_font(font_match_key.id) {
+                selected_font = Some(font);
+                break;
+            }
+        }
+    }
+
+    let font = selected_font.expect("No suitable font found for text rendering");
 
     let word_text = &text[start_index..end_index];
 
