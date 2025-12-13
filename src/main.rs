@@ -54,6 +54,12 @@ impl EditingCursor {
             }
 
             let layouted_line = line_buffer.layouted_line.as_ref().unwrap();
+
+            // Skip empty lines (no glyphs)
+            if layouted_line.layouted_glyphs.is_empty() {
+                continue;
+            }
+
             let line_height = layouted_line.maximum_y_reach + layouted_line.minimum_y_origin;
 
             let line_vertical_position = layouted_line
@@ -94,10 +100,19 @@ fn main() -> glib::ExitCode {
         .application_id("com.github.ghovax.editex")
         .build();
 
-    // application.set_flags(ApplicationFlags::HANDLES_COMMAND_LINE);
+    application.set_flags(gtk4::gio::ApplicationFlags::HANDLES_COMMAND_LINE);
 
-    application.connect_activate(|application| {
-        run_application_logic(application);
+    application.connect_command_line(|app, cmd_line| {
+        let args = cmd_line.arguments();
+        let file_path = if args.len() > 1 {
+            // Convert OsString to PathBuf, skip first arg (program name)
+            Some(std::path::PathBuf::from(&args[1]))
+        } else {
+            None
+        };
+
+        run_application_logic(app, file_path);
+        0 // Return 0 for success
     });
 
     application.run()
@@ -125,7 +140,7 @@ pub struct Document {
     pub font_size: f32,
 }
 
-fn run_application_logic(application: &gtk4::Application) {
+fn run_application_logic(application: &gtk4::Application, initial_file_path: Option<std::path::PathBuf>) {
     let window = Rc::new(gtk4::ApplicationWindow::new(application));
 
     // Loads the configuration file from `$HOME/.editex/config.json`, and if it doesn't exist
@@ -196,7 +211,7 @@ fn run_application_logic(application: &gtk4::Application) {
         button.connect_clicked(move |_button| {
             log::trace!("Pressed the button to open a document");
             let dialog = Rc::new(FileChooserDialog::new(
-                Some("Open document from JSON file"),
+                Some("Open document"),
                 Some(window.as_ref()),
                 FileChooserAction::Open,
                 &[],
@@ -436,31 +451,34 @@ fn run_application_logic(application: &gtk4::Application) {
 
                 match document_element {
                     DocumentElement::Line { anchor_point, .. } => {
-                        let mut painting_options = Paint::default();
-                        painting_options.set_color(skia_safe::Color::from_argb(128, 255, 0, 0));
-                        painting_options.set_stroke_width(1.0);
-                        painting_options.set_stroke(true);
+                        // Only draw line bounds if there are glyphs (skip empty lines)
+                        if !layouted_line.layouted_glyphs.is_empty() {
+                            let mut painting_options = Paint::default();
+                            painting_options.set_color(skia_safe::Color::from_argb(128, 255, 0, 0));
+                            painting_options.set_stroke_width(1.0);
+                            painting_options.set_stroke(true);
 
-                        let x_origin = layouted_line
-                            .layouted_glyphs
-                            .first()
-                            .unwrap()
-                            .physical_x_offset
-                            .unwrap() as f32;
-                        let last_glyph = layouted_line.layouted_glyphs.last().unwrap();
-                        let x_reach = last_glyph.physical_x_offset.unwrap() as f32 + last_glyph.width;
+                            let x_origin = layouted_line
+                                .layouted_glyphs
+                                .first()
+                                .unwrap()
+                                .physical_x_offset
+                                .unwrap() as f32;
+                            let last_glyph = layouted_line.layouted_glyphs.last().unwrap();
+                            let x_reach = last_glyph.physical_x_offset.unwrap() as f32 + last_glyph.width;
 
-                        let mut line_top_path = Path::new();
-                        line_top_path.move_to((x_origin, anchor_point.1 - layouted_line.maximum_y_reach));
-                        line_top_path.line_to((x_reach, anchor_point.1 - layouted_line.maximum_y_reach));
+                            let mut line_top_path = Path::new();
+                            line_top_path.move_to((x_origin, anchor_point.1 - layouted_line.maximum_y_reach));
+                            line_top_path.line_to((x_reach, anchor_point.1 - layouted_line.maximum_y_reach));
 
-                        canvas.draw_path(&line_top_path, &painting_options);
+                            canvas.draw_path(&line_top_path, &painting_options);
 
-                        let mut line_bottom_path = Path::new();
-                        line_bottom_path.move_to((x_origin, anchor_point.1 - layouted_line.minimum_y_origin));
-                        line_bottom_path.line_to((x_reach, anchor_point.1 - layouted_line.minimum_y_origin));
+                            let mut line_bottom_path = Path::new();
+                            line_bottom_path.move_to((x_origin, anchor_point.1 - layouted_line.minimum_y_origin));
+                            line_bottom_path.line_to((x_reach, anchor_point.1 - layouted_line.minimum_y_origin));
 
-                        canvas.draw_path(&line_bottom_path, &painting_options);
+                            canvas.draw_path(&line_bottom_path, &painting_options);
+                        }
                     }
                     DocumentElement::Page { size, contents } => {
                         // TODO
@@ -757,8 +775,16 @@ fn run_application_logic(application: &gtk4::Application) {
                                     }
                                 }
 
-                                let cursor_span_index = cursor_span_index.unwrap_or(spans.len() - 1);
-                                let index_in_span = index_in_span.unwrap_or(spans.get(cursor_span_index).unwrap().0.len());
+                                // Handle edge cases for empty lines or cursor at start
+                                if spans.is_empty() {
+                                    // If there are no spans, create an empty one
+                                    spans.push((String::new(), Attributes::new()));
+                                }
+
+                                let cursor_span_index = cursor_span_index.unwrap_or(0);
+                                let index_in_span = index_in_span.unwrap_or_else(|| {
+                                    spans.get(cursor_span_index).map(|s| s.0.len()).unwrap_or(0)
+                                });
 
                                 // Split the spans at cursor position
                                 let mut new_line_spans = Vec::new();
@@ -806,6 +832,14 @@ fn run_application_logic(application: &gtk4::Application) {
                     // Insert the new line
                     if let Some((insert_index, new_line)) = new_line_to_insert {
                         document.as_mut().unwrap().elements.insert(insert_index, new_line);
+
+                        // Update anchor points of all lines below the inserted line
+                        let line_spacing = font_size * 1.5;
+                        for i in (insert_index + 1)..document.as_ref().unwrap().elements.len() {
+                            if let Some(DocumentElement::Line { anchor_point, .. }) = document.as_mut().unwrap().elements.get_mut(i) {
+                                anchor_point.1 += line_spacing;
+                            }
+                        }
                     }
                 } else {
                     let mut line_index_counter = 0;
@@ -868,6 +902,37 @@ fn run_application_logic(application: &gtk4::Application) {
 
     // Add the ScrolledWindow to the main window
     window.set_child(Some(&vertical_box));
+
+    // Auto-load document if file path was provided as command-line argument
+    if let Some(file_path) = initial_file_path {
+        log::info!("Loading document from command-line argument: {:?}", file_path);
+
+        if let Ok(mut file) = File::open(&file_path) {
+            let mut file_content = String::new();
+            if let Ok(_) = file.read_to_string(&mut file_content) {
+                if let Ok(document_replacement) = serde_json::from_str::<Document>(&file_content) {
+                    let font_size_replacement = document_replacement.font_size * scale_factor as f32;
+
+                    let mut document_ref = document.borrow_mut();
+                    *document_ref = Some(document_replacement);
+
+                    let mut font_size_ref = font_size.borrow_mut();
+                    *font_size_ref = font_size_replacement;
+
+                    drawing_area.queue_draw();
+                    drawing_area.grab_focus();
+
+                    log::info!("Document loaded successfully from {:?}", file_path);
+                } else {
+                    log::error!("Failed to parse JSON from file: {:?}", file_path);
+                }
+            } else {
+                log::error!("Failed to read file: {:?}", file_path);
+            }
+        } else {
+            log::error!("Failed to open file: {:?}", file_path);
+        }
+    }
 
     window.present();
 }
