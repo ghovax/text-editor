@@ -1,4 +1,4 @@
-# editex
+# text-editor
 
 A TeX-inspired scientific document editor built with GTK4 and Skia.
 
@@ -22,7 +22,7 @@ cargo build --release
 Launch the editor and open a document:
 
 ```bash
-./editex --document path/to/document.json
+./text-editor --document path/to/document.json
 ```
 
 Or launch without a document and use the toolbar button to open one.
